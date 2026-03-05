@@ -39,6 +39,8 @@ const AI_CONFIG_STORAGE_KEYS = {
   white: "chess:ai:white",
 } as const;
 
+type GameModeType = "ai-vs-ai" | "single" | "pvp";
+
 interface ChessBoardMove extends ChessMove {
   side: ChessSide;
 }
@@ -58,6 +60,11 @@ export default function ChessClient() {
   const [started, setStarted] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
 
+  // 游戏模式：ai-vs-ai（双 AI）、single（单人对 AI）、pvp（双人对战）
+  const [gameMode, setGameMode] = useState<GameModeType>("ai-vs-ai");
+  const [playerSide, setPlayerSide] = useState<ChessSide>(WHITE_SIDE);
+  const [boardHistory, setBoardHistory] = useState<ChessBoard[]>([]);
+
   const {
     blackConfig: blackAI,
     whiteConfig: whiteAI,
@@ -67,6 +74,11 @@ export default function ChessClient() {
     blackStorageKey: AI_CONFIG_STORAGE_KEYS.black,
     whiteStorageKey: AI_CONFIG_STORAGE_KEYS.white,
   });
+
+  // PvP 模式不需要 AI 配置，但需要知道当前玩家是否有合法配置（用于显示）
+  const isPvP = gameMode === "pvp";
+  const isSingle = gameMode === "single";
+  const isAiVsAi = gameMode === "ai-vs-ai";
 
   const [speedMs, setSpeedMs] = useState<number>(320);
   const [stats, setStats] = useState({ white: 0, black: 0, draw: 0 });
@@ -137,6 +149,7 @@ export default function ChessClient() {
     setError("");
     setMoveHistory([]);
     setAiConversations(createInitialConversations());
+    setBoardHistory([]);
   }, []);
 
   const clearStats = useCallback(() => {
@@ -164,6 +177,9 @@ export default function ChessClient() {
       const moveReason = meta.reason || "";
       const moveText = formatMoveText(movingPiece, move, result.promoted);
       const capturedText = result.captured ? pieceLabel(result.captured) : "";
+
+      // 保存当前棋盘到历史记录
+      setBoardHistory((prev) => [...prev, baseBoard]);
 
       setBoard(nextBoard);
       setLastMove({
@@ -221,8 +237,60 @@ export default function ChessClient() {
     [moveHistory.length],
   );
 
+  // 悔棋功能
+  const undoMove = useCallback(() => {
+    if (boardHistory.length === 0 || gameOver) {
+      return;
+    }
+
+    // 单人模式下，需要回退两步（玩家和 AI 各一步）；PvP 和双 AI 模式回退一步
+    const stepsToUndo = isSingle && started ? 2 : 1;
+    const targetIndex = Math.max(0, boardHistory.length - stepsToUndo);
+
+    const previousBoard = boardHistory[targetIndex];
+    setBoard(previousBoard);
+    setBoardHistory((prev) => prev.slice(0, targetIndex));
+
+    // 恢复对应的移动历史
+    const newMoveHistory = moveHistory.slice(0, targetIndex);
+    setMoveHistory(newMoveHistory);
+
+    // 恢复当前玩家
+    const lastSide = newMoveHistory.length > 0 ? newMoveHistory[newMoveHistory.length - 1].side : WHITE_SIDE;
+    setCurrentSide(oppositeSide(lastSide));
+
+    // 恢复最后一步信息
+    if (newMoveHistory.length > 0) {
+      const last = newMoveHistory[newMoveHistory.length - 1];
+      setLastMove({
+        fromRow: last.fromRow,
+        fromCol: last.fromCol,
+        toRow: last.toRow,
+        toCol: last.toCol,
+        side: last.side,
+      });
+      setLastReason(last.reason || "");
+    } else {
+      setLastMove(null);
+      setLastReason("");
+    }
+
+    // 恢复 AI 对话历史（仅单人模式需要）
+    if (isSingle) {
+      const newConversations = createInitialConversations();
+      setAiConversations(newConversations);
+    }
+    setError("");
+  }, [boardHistory, gameOver, moveHistory, isSingle, started]);
+
   useEffect(() => {
     if (gameOver || !started) {
+      return;
+    }
+
+    // 单人模式：如果是玩家的回合，跳过 AI 逻辑
+    // PvP 模式：不需要 AI 逻辑
+    if ((isSingle && currentSide === playerSide) || isPvP) {
       return;
     }
 
@@ -352,6 +420,9 @@ export default function ChessClient() {
     speedMs,
     started,
     whiteAI,
+    isSingle,
+    playerSide,
+    isPvP,
   ]);
 
   const statusText = useMemo(() => {
@@ -366,12 +437,32 @@ export default function ChessClient() {
     }
 
     if (!started) {
+      if (isSingle || isPvP) {
+        return "请选择模式并点击开始对战";
+      }
       if (!effectiveConfig.white.ready || !effectiveConfig.black.ready) {
         return "请先配置黑白双方 API URL / Model / API Key，然后点击开始对战";
       }
-      return "已就绪，点击“开始对战”";
+      return "已就绪，点击「开始对战」";
     }
 
+    // 单人模式
+    if (isSingle) {
+      if (currentSide === playerSide) {
+        return "轮到你了，点击棋盘走子";
+      }
+      if (thinking) {
+        return `AI（${activeModel}）思考中...`;
+      }
+      return `AI（${activeModel}）等待走子`;
+    }
+
+    // PvP 模式
+    if (isPvP) {
+      return `轮到${sideLabel(currentSide)}，点击棋盘走子`;
+    }
+
+    // 双 AI 模式
     if (thinking) {
       return `${sideLabel(currentSide)}（${activeModel}）思考中...`;
     }
@@ -388,12 +479,71 @@ export default function ChessClient() {
     effectiveConfig.black.ready,
     effectiveConfig.white.ready,
     gameOver,
+    isSingle,
+    isPvP,
     started,
     thinking,
     winner,
+    playerSide,
   ]);
 
   const boardSummary = useMemo(() => boardToCompactText(board), [board]);
+
+  // 存储选中位置的 ref
+  const selectedPositionRef = useRef<{ row: number; col: number } | null>(null);
+
+  // 处理棋盘格子点击
+  const handleCellClick = useCallback((row: number, col: number) => {
+    if ((!isSingle && !isPvP) || !started || gameOver) {
+      return;
+    }
+
+    // 单人模式：只在玩家的回合响应点击
+    // PvP 模式：双方都可以操作
+    if (isSingle && currentSide !== playerSide) {
+      return;
+    }
+
+    const clickedPiece = board[row][col];
+
+    // 如果已经选中了棋子
+    if (selectedPositionRef.current) {
+      const { row: fromRow, col: fromCol } = selectedPositionRef.current;
+
+      // 如果点击的是同一个位置，取消选择
+      if (fromRow === row && fromCol === col) {
+        selectedPositionRef.current = null;
+        return;
+      }
+
+      // 如果点击的是己方其他棋子，切换选择
+      if (clickedPiece && clickedPiece.side === currentSide) {
+        selectedPositionRef.current = { row, col };
+        return;
+      }
+
+      // 尝试移动
+      const move: ChessMove = {
+        fromRow,
+        fromCol,
+        toRow: row,
+        toCol: col,
+      };
+
+      if (isLegalMove(board, move, currentSide)) {
+        commitMove(board, move, currentSide, {
+          reason: "玩家走子",
+        });
+        selectedPositionRef.current = null;
+      }
+      return;
+    }
+
+    // 如果点击的是己方棋子，选中它
+    if (clickedPiece && clickedPiece.side === currentSide) {
+      selectedPositionRef.current = { row, col };
+    }
+  }, [isSingle, isPvP, started, gameOver, currentSide, playerSide, board, commitMove]);
 
   return (
     <main className="app">
@@ -408,7 +558,63 @@ export default function ChessClient() {
 
       <section className="centerPanel chessCenterPanel">
         <h1>国际象棋 · 双 LLM 对战</h1>
-        <p className="sub">白方先手，黑白双方均由 LLM 控制</p>
+        <p className="sub">
+          {isSingle
+            ? `玩家 (${sideLabel(playerSide)}) vs AI，点击棋盘走子`
+            : isPvP
+            ? "双人对战，点击棋盘走子"
+            : "白方先手，黑白双方均由 LLM 控制"}
+        </p>
+
+        <div className="modeSelector">
+          <div className="modeToggleGroup">
+            <button
+              className={isAiVsAi ? "active" : ""}
+              onClick={() => setGameMode("ai-vs-ai")}
+              disabled={started}
+              type="button"
+            >
+              双 AI 对战
+            </button>
+            <button
+              className={isSingle ? "active" : ""}
+              onClick={() => setGameMode("single")}
+              disabled={started}
+              type="button"
+            >
+              单人对 AI
+            </button>
+            <button
+              className={isPvP ? "active" : ""}
+              onClick={() => setGameMode("pvp")}
+              disabled={started}
+              type="button"
+            >
+              双人对战
+            </button>
+          </div>
+          {isSingle && (
+            <div className="sideSelector">
+              <span>选择先手：</span>
+              <button
+                className={playerSide === WHITE_SIDE ? "active" : ""}
+                onClick={() => setPlayerSide(WHITE_SIDE)}
+                disabled={started}
+                type="button"
+              >
+                白方 (玩家)
+              </button>
+              <button
+                className={playerSide === BLACK_SIDE ? "active" : ""}
+                onClick={() => setPlayerSide(BLACK_SIDE)}
+                disabled={started}
+                type="button"
+              >
+                黑方 (玩家)
+              </button>
+            </div>
+          )}
+        </div>
 
         <div className="xiangqiMetaBar">
           <span className={`sideChip white ${!gameOver && currentSide === WHITE_SIDE ? "active" : ""}`}>
@@ -423,18 +629,20 @@ export default function ChessClient() {
         </div>
 
         <div className="centerControls">
-          <label>
-            每步间隔（毫秒）
-            <input
-              type="range"
-              min="180"
-              max="1800"
-              step="20"
-              value={speedMs}
-              onChange={(event) => setSpeedMs(Number(event.target.value))}
-            />
-            <span>{speedMs}</span>
-          </label>
+          {(isAiVsAi || isSingle) && (
+            <label>
+              每步间隔（毫秒）
+              <input
+                type="range"
+                min="180"
+                max="1800"
+                step="20"
+                value={speedMs}
+                onChange={(event) => setSpeedMs(Number(event.target.value))}
+              />
+              <span>{speedMs}</span>
+            </label>
+          )}
 
           <div className="chessHintCard">
             <p>坐标说明：row 0-7，col 0-7</p>
@@ -446,6 +654,9 @@ export default function ChessClient() {
         <div className="actions">
           <button onClick={() => setStarted(true)} disabled={started || gameOver}>
             开始对战
+          </button>
+          <button onClick={undoMove} disabled={!started || boardHistory.length === 0 || gameOver}>
+            悔棋
           </button>
           <button onClick={restartGame}>重新开始</button>
           <button className="ghost" onClick={clearStats}>
@@ -467,17 +678,26 @@ export default function ChessClient() {
                     !!lastMove &&
                     ((lastMove.fromRow === rowIndex && lastMove.fromCol === colIndex) ||
                       (lastMove.toRow === rowIndex && lastMove.toCol === colIndex));
+                  const isSelected =
+                    selectedPositionRef.current?.row === rowIndex &&
+                    selectedPositionRef.current?.col === colIndex;
 
                   const className = [
                     "chessCell",
                     dark ? "dark" : "light",
                     isLast ? "last" : "",
+                    isSelected ? "selected" : "",
                   ]
                     .filter(Boolean)
                     .join(" ");
 
                   return (
-                    <div key={`cell-${rowIndex}-${colIndex}`} className={className}>
+                    <div
+                      key={`cell-${rowIndex}-${colIndex}`}
+                      className={className}
+                      onClick={() => handleCellClick(rowIndex, colIndex)}
+                      style={{ cursor: (isSingle || isPvP) && started && !gameOver ? "pointer" : "default" }}
+                    >
                       {piece ? (
                         <span className={`chessPieceToken ${piece.side}`}>{pieceToken(piece)}</span>
                       ) : null}

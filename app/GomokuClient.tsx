@@ -8,7 +8,7 @@ import {
   useState,
 } from "react";
 import { SideConfigPanel } from "../components/gomoku/SideConfigPanel";
-import { drawBoard, CANVAS_SIZE, type BoardMove } from "../lib/boardCanvas";
+import { drawBoard, CANVAS_SIZE, PADDING, CELL, BOARD_SIZE, type BoardMove } from "../lib/boardCanvas";
 import {
   applyMove,
   BLACK,
@@ -47,6 +47,8 @@ const AI_CONFIG_STORAGE_KEYS = {
   white: "gomoku:ai:white",
 } as const;
 
+type GameModeType = "ai-vs-ai" | "single" | "pvp";
+
 export default function GomokuClient() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -60,6 +62,11 @@ export default function GomokuClient() {
   const [started, setStarted] = useState<boolean>(false);
   const [error, setError] = useState<string>("");
 
+  // 游戏模式：ai-vs-ai（双 AI）、single（单人对 AI）、pvp（双人对战）
+  const [gameMode, setGameMode] = useState<GameModeType>("ai-vs-ai");
+  const [playerSide, setPlayerSide] = useState<Player>(BLACK);
+  const [boardHistory, setBoardHistory] = useState<Board[]>([]);
+
   const {
     blackConfig: blackAI,
     whiteConfig: whiteAI,
@@ -69,6 +76,11 @@ export default function GomokuClient() {
     blackStorageKey: AI_CONFIG_STORAGE_KEYS.black,
     whiteStorageKey: AI_CONFIG_STORAGE_KEYS.white,
   });
+
+  // PvP 模式不需要 AI 配置，但需要知道当前玩家是否有合法配置（用于显示）
+  const isPvP = gameMode === "pvp";
+  const isSingle = gameMode === "single";
+  const isAiVsAi = gameMode === "ai-vs-ai";
 
   const [speedMs, setSpeedMs] = useState<number>(250);
   const [stats, setStats] = useState({ black: 0, white: 0, draw: 0 });
@@ -127,6 +139,7 @@ export default function GomokuClient() {
     setError("");
     setMoveHistory([]);
     setAiConversations(createInitialConversations());
+    setBoardHistory([]);
   }, []);
 
   const clearStats = useCallback(() => {
@@ -139,6 +152,9 @@ export default function GomokuClient() {
       if (!nextBoard) {
         return false;
       }
+
+      // 保存当前棋盘到历史记录
+      setBoardHistory((prev) => [...prev, baseBoard]);
 
       const moveReason = meta.reason || "";
 
@@ -184,6 +200,47 @@ export default function GomokuClient() {
     [],
   );
 
+  // 悔棋功能
+  const undoMove = useCallback(() => {
+    if (boardHistory.length === 0 || gameOver) {
+      return;
+    }
+
+    // 单人模式下，需要回退两步（玩家和 AI 各一步）；PvP 和双 AI 模式回退一步
+    const stepsToUndo = isSingle && started ? 2 : 1;
+    const targetIndex = Math.max(0, boardHistory.length - stepsToUndo);
+
+    const previousBoard = boardHistory[targetIndex];
+    setBoard(previousBoard);
+    setBoardHistory((prev) => prev.slice(0, targetIndex));
+
+    // 恢复对应的移动历史
+    const newMoveHistory = moveHistory.slice(0, targetIndex);
+    setMoveHistory(newMoveHistory);
+
+    // 恢复当前玩家
+    const lastPlayer = newMoveHistory.length > 0 ? newMoveHistory[newMoveHistory.length - 1].player : BLACK;
+    setCurrentPlayer(opponent(lastPlayer));
+
+    // 恢复最后一步信息
+    if (newMoveHistory.length > 0) {
+      const last = newMoveHistory[newMoveHistory.length - 1];
+      setLastMove({ row: last.row, col: last.col, player: last.player });
+      setLastReason(last.reason || "");
+    } else {
+      setLastMove(null);
+      setLastReason("");
+    }
+
+    // 恢复 AI 对话历史（仅单人模式需要）
+    if (isSingle) {
+      const newConversations = createInitialConversations();
+      setAiConversations(newConversations);
+    }
+
+    setError("");
+  }, [boardHistory, gameOver, moveHistory, isSingle, started]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
@@ -196,10 +253,56 @@ export default function GomokuClient() {
     }
 
     drawBoard(context, board, lastMove);
-  }, [board, lastMove]);
+
+    // 单人模式或 PvP 模式下添加点击事件
+    if ((!isSingle && !isPvP) || !started || gameOver) {
+      return;
+    }
+
+    const handleClick = (event: MouseEvent) => {
+      // 只在玩家的回合响应点击
+      if (isSingle && currentPlayer !== playerSide) {
+        return;
+      }
+
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = CANVAS_SIZE / rect.width;
+      const scaleY = CANVAS_SIZE / rect.height;
+
+      const x = (event.clientX - rect.left) * scaleX;
+      const y = (event.clientY - rect.top) * scaleY;
+
+      const col = Math.round((x - PADDING) / CELL);
+      const row = Math.round((y - PADDING) / CELL);
+
+      if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) {
+        return;
+      }
+
+      if (!isLegalMove(board, row, col)) {
+        return;
+      }
+
+      // 玩家落子（单人模式或 PvP）
+      commitMove(board, row, col, currentPlayer, {
+        reason: isSingle && currentPlayer === playerSide ? "玩家落子" : "玩家落子",
+      });
+    };
+
+    canvas.addEventListener("click", handleClick);
+    return () => {
+      canvas.removeEventListener("click", handleClick);
+    };
+  }, [board, lastMove, isSingle, isPvP, started, gameOver, currentPlayer, playerSide, commitMove]);
 
   useEffect(() => {
     if (gameOver || !started) {
+      return;
+    }
+
+    // 单人模式：如果是玩家的回合，跳过 AI 逻辑
+    // PvP 模式：不需要 AI 逻辑
+    if ((isSingle && currentPlayer === playerSide) || isPvP) {
       return;
     }
 
@@ -303,6 +406,9 @@ export default function GomokuClient() {
     moveHistory,
     speedMs,
     whiteAI,
+    isSingle,
+    playerSide,
+    isPvP,
   ]);
 
   const statusText = useMemo(() => {
@@ -314,12 +420,32 @@ export default function GomokuClient() {
     }
 
     if (!started) {
+      if (isSingle || isPvP) {
+        return "请选择模式并点击开始对战";
+      }
       if (!effectiveConfig.black.ready || !effectiveConfig.white.ready) {
         return "请先配置黑白双方 API URL / Model / API Key，然后点击开始对战";
       }
-      return "已就绪，点击“开始对战”";
+      return "已就绪，点击「开始对战」";
     }
 
+    // 单人模式
+    if (isSingle) {
+      if (currentPlayer === playerSide) {
+        return "轮到你了，点击棋盘落子";
+      }
+      if (thinking) {
+        return `AI（${activeModel}）思考中...`;
+      }
+      return `AI（${activeModel}）等待落子`;
+    }
+
+    // PvP 模式
+    if (isPvP) {
+      return `轮到${playerLabel(currentPlayer)}，点击棋盘落子`;
+    }
+
+    // 双 AI 模式
     if (thinking) {
       return `${playerLabel(currentPlayer)}（${activeModel}）思考中...`;
     }
@@ -329,7 +455,7 @@ export default function GomokuClient() {
     }
 
     return `${playerLabel(currentPlayer)}（${activeModel}）等待落子`;
-  }, [activeModel, currentPlayer, currentSideReady, effectiveConfig.black.ready, effectiveConfig.white.ready, gameOver, started, thinking, winner]);
+  }, [activeModel, currentPlayer, currentSideReady, effectiveConfig.black.ready, effectiveConfig.white.ready, gameOver, isSingle, isPvP, started, thinking, winner, playerSide]);
 
   const boardSummary = useMemo(() => boardToCompactText(board), [board]);
 
@@ -346,26 +472,87 @@ export default function GomokuClient() {
 
       <section className="centerPanel">
         <h1>五子棋 · 双 LLM 对战</h1>
-        <p className="sub">黑白双方均由 LLM 控制</p>
+        <p className="sub">
+          {isSingle
+            ? `玩家 (${playerLabel(playerSide)}) vs AI，点击棋盘落子`
+            : isPvP
+            ? "双人对战，点击棋盘落子"
+            : "黑白双方均由 LLM 控制"}
+        </p>
+
+        <div className="modeSelector">
+          <div className="modeToggleGroup">
+            <button
+              className={isAiVsAi ? "active" : ""}
+              onClick={() => setGameMode("ai-vs-ai")}
+              disabled={started}
+              type="button"
+            >
+              双 AI 对战
+            </button>
+            <button
+              className={isSingle ? "active" : ""}
+              onClick={() => setGameMode("single")}
+              disabled={started}
+              type="button"
+            >
+              单人对 AI
+            </button>
+            <button
+              className={isPvP ? "active" : ""}
+              onClick={() => setGameMode("pvp")}
+              disabled={started}
+              type="button"
+            >
+              双人对战
+            </button>
+          </div>
+          {isSingle && (
+            <div className="sideSelector">
+              <span>选择先手：</span>
+              <button
+                className={playerSide === BLACK ? "active" : ""}
+                onClick={() => setPlayerSide(BLACK)}
+                disabled={started}
+                type="button"
+              >
+                黑子 (玩家)
+              </button>
+              <button
+                className={playerSide === WHITE ? "active" : ""}
+                onClick={() => setPlayerSide(WHITE)}
+                disabled={started}
+                type="button"
+              >
+                白子 (玩家)
+              </button>
+            </div>
+          )}
+        </div>
 
         <div className="centerControls">
-          <label>
-            每步间隔（毫秒）
-            <input
-              type="range"
-              min="120"
-              max="1500"
-              step="20"
-              value={speedMs}
-              onChange={(event) => setSpeedMs(Number(event.target.value))}
-            />
-            <span>{speedMs}</span>
-          </label>
+          {(isAiVsAi || isSingle) && (
+            <label>
+              每步间隔（毫秒）
+              <input
+                type="range"
+                min="120"
+                max="1500"
+                step="20"
+                value={speedMs}
+                onChange={(event) => setSpeedMs(Number(event.target.value))}
+              />
+              <span>{speedMs}</span>
+            </label>
+          )}
         </div>
 
         <div className="actions">
           <button onClick={() => setStarted(true)} disabled={started || gameOver}>
             开始对战
+          </button>
+          <button onClick={undoMove} disabled={!started || boardHistory.length === 0 || gameOver}>
+            悔棋
           </button>
           <button onClick={restartGame}>重新开始</button>
           <button className="ghost" onClick={clearStats}>

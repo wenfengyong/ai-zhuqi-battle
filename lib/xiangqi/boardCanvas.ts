@@ -7,9 +7,9 @@ import type { XiangqiBoard, XiangqiSide } from "./types";
 export const XIANGQI_CANVAS_WIDTH = 664;
 export const XIANGQI_CANVAS_HEIGHT = 756;
 
-const BOARD_PADDING_X = 52;
-const BOARD_PADDING_Y = 52;
-const CELL = 70;
+export const BOARD_PADDING_X = 52;
+export const BOARD_PADDING_Y = 52;
+export const CELL = 70;
 const RIVER_GAP = 22;
 
 export interface XiangqiBoardMove {

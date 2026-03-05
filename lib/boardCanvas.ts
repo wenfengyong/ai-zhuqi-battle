@@ -1,8 +1,9 @@
 import { BOARD_SIZE, BLACK, EMPTY, WHITE, type Board, type Player } from "./game";
 
+export { BOARD_SIZE };
 export const CANVAS_SIZE = 640;
-const PADDING = 32;
-const CELL = (CANVAS_SIZE - PADDING * 2) / (BOARD_SIZE - 1);
+export const PADDING = 32;
+export const CELL = (CANVAS_SIZE - PADDING * 2) / (BOARD_SIZE - 1);
 
 export interface BoardMove {
   row: number;

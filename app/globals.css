@@ -183,6 +183,86 @@ input[type="range"] {
   flex-wrap: wrap;
 }
 
+.modeSelector {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 12px;
+  background: rgba(148, 176, 199, 0.08);
+  border: 1px solid rgba(153, 182, 207, 0.25);
+  border-radius: 12px;
+}
+
+.modeToggleGroup {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.modeToggleGroup button {
+  flex: 1;
+  min-width: 100px;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: rgba(148, 176, 199, 0.14);
+  border: 1px solid rgba(153, 182, 207, 0.34);
+}
+
+.modeToggleGroup button.active {
+  background: linear-gradient(180deg, #f7cb78, #eba53b);
+  color: #162432;
+  border-color: rgba(162, 108, 36, 0.9);
+}
+
+.modeToggleGroup button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.modeToggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-weight: 700;
+  color: #d6e8f8;
+}
+
+.modeToggle input[type="checkbox"] {
+  width: auto;
+  cursor: pointer;
+}
+
+.sideSelector {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.sideSelector span {
+  color: #c9dbe8;
+  font-size: 13px;
+}
+
+.sideSelector button {
+  padding: 6px 12px;
+  font-size: 13px;
+  background: rgba(148, 176, 199, 0.14);
+  border: 1px solid rgba(153, 182, 207, 0.34);
+}
+
+.sideSelector button.active {
+  background: linear-gradient(180deg, #f7cb78, #eba53b);
+  color: #162432;
+  border-color: rgba(162, 108, 36, 0.9);
+}
+
+.sideSelector button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 button {
   cursor: pointer;
   border: 0;
@@ -370,6 +450,10 @@ button.ghost {
 
 .chessCell.last {
   box-shadow: inset 0 0 0 3px rgba(90, 178, 248, 0.64);
+}
+
+.chessCell.selected {
+  box-shadow: inset 0 0 0 3px rgba(255, 214, 102, 0.8);
 }
 
 .chessPieceToken {
