@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import ChessClient from "./ChessClient";
 import GomokuClient from "./GomokuClient";
 import XiangqiClient from "./XiangqiClient";
 
-type GameMode = "gomoku" | "xiangqi";
+type GameMode = "gomoku" | "xiangqi" | "chess";
 
 const STORAGE_KEY = "llm-battle:game-mode";
 const GITHUB_URL = "https://github.com/murongg/ai-zhuqi-battle";
@@ -16,7 +17,7 @@ export default function GameHubClient() {
   useEffect(() => {
     try {
       const stored = window.localStorage.getItem(STORAGE_KEY);
-      if (stored === "gomoku" || stored === "xiangqi") {
+      if (stored === "gomoku" || stored === "xiangqi" || stored === "chess") {
         setMode(stored);
       }
     } catch {
@@ -55,6 +56,13 @@ export default function GameHubClient() {
           >
             中国象棋
           </button>
+          <button
+            className={mode === "chess" ? "active" : ""}
+            onClick={() => setMode("chess")}
+            type="button"
+          >
+            国际象棋
+          </button>
         </div>
 
         <a
@@ -74,7 +82,7 @@ export default function GameHubClient() {
         </a>
       </header>
 
-      {mode === "gomoku" ? <GomokuClient /> : <XiangqiClient />}
+      {mode === "gomoku" ? <GomokuClient /> : mode === "xiangqi" ? <XiangqiClient /> : <ChessClient />}
     </>
   );
 }
