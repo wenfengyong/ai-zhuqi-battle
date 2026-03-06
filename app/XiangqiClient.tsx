@@ -59,6 +59,8 @@ export default function XiangqiClient() {
   // 游戏模式：ai-vs-ai（双 AI）、single（单人对 AI）、pvp（双人对战）
   const [gameMode, setGameMode] = useState<GameModeType>("ai-vs-ai");
   const [playerSide, setPlayerSide] = useState<XiangqiSide>(RED_SIDE);
+  const [retryCount, setRetryCount] = useState<number>(0);
+  const [retryKey, setRetryKey] = useState<number>(0);
   const [boardHistory, setBoardHistory] = useState<XiangqiBoard[]>([]);
 
   const {
@@ -146,6 +148,8 @@ export default function XiangqiClient() {
     setMoveHistory([]);
     setAiConversations(createInitialConversations());
     setBoardHistory([]);
+    setRetryCount(0);
+    setRetryKey(0);
   }, []);
 
   const clearStats = useCallback(() => {
@@ -274,7 +278,18 @@ export default function XiangqiClient() {
       setAiConversations(newConversations);
     }
     setError("");
+    setRetryCount(0);
   }, [boardHistory, gameOver, moveHistory, isSingle, started]);
+
+  // 重试 AI 落子
+  const retryAiMove = useCallback(() => {
+    if (!error || gameOver) {
+      return;
+    }
+    setRetryCount(0);
+    setRetryKey((prev) => prev + 1);
+    setError("");
+  }, [error, gameOver]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -705,7 +720,15 @@ export default function XiangqiClient() {
 
         <p className="status">{statusText}</p>
         {lastReason ? <p className="reason">上一步理由：{lastReason}</p> : null}
-        {error ? <p className="error">{error}</p> : null}
+        {error ? (
+          <div>
+            <p className="error">{error}</p>
+            {retryCount > 0 && <p className="error">已重试 {retryCount} 次</p>}
+            <button onClick={retryAiMove} style={{ marginTop: '8px' }}>
+              重试 AI 落子
+            </button>
+          </div>
+        ) : null}
 
         <div className="boardWrap">
           <canvas

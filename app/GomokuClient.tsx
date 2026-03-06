@@ -67,6 +67,10 @@ export default function GomokuClient() {
   const [playerSide, setPlayerSide] = useState<Player>(BLACK);
   const [boardHistory, setBoardHistory] = useState<Board[]>([]);
 
+  // 重试相关状态
+  const [retryCount, setRetryCount] = useState<number>(0);
+  const [retryKey, setRetryKey] = useState<number>(0);
+
   const {
     blackConfig: blackAI,
     whiteConfig: whiteAI,
@@ -140,6 +144,8 @@ export default function GomokuClient() {
     setMoveHistory([]);
     setAiConversations(createInitialConversations());
     setBoardHistory([]);
+    setRetryCount(0);
+    setRetryKey(0);
   }, []);
 
   const clearStats = useCallback(() => {
@@ -239,7 +245,18 @@ export default function GomokuClient() {
     }
 
     setError("");
+    setRetryCount(0);
   }, [boardHistory, gameOver, moveHistory, isSingle, started]);
+
+  // 重试 AI 落子
+  const retryAiMove = useCallback(() => {
+    if (!error || gameOver) {
+      return;
+    }
+    setRetryCount(0);
+    setRetryKey((prev) => prev + 1);
+    setError("");
+  }, [error, gameOver]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -382,6 +399,11 @@ export default function GomokuClient() {
         }
 
         const message = err instanceof Error ? err.message : "未知错误";
+        // 检测是否为可重试的错误（如 JSON 解析错误、API 错误等）
+        const isRetryableError = message.includes("JSON") || message.includes("API") || message.includes("400") || message.includes("500") || message.includes("502") || message.includes("timeout");
+        if (isRetryableError) {
+          setRetryCount((prev) => prev + 1);
+        }
         setError(`LLM调用失败：${message}`);
       } finally {
         if (!controller.signal.aborted) {
@@ -409,6 +431,7 @@ export default function GomokuClient() {
     isSingle,
     playerSide,
     isPvP,
+    retryKey,
   ]);
 
   const statusText = useMemo(() => {
@@ -562,7 +585,15 @@ export default function GomokuClient() {
 
         <p className="status">{statusText}</p>
         {lastReason ? <p className="reason">上一步理由：{lastReason}</p> : null}
-        {error ? <p className="error">{error}</p> : null}
+        {error ? (
+          <div>
+            <p className="error">{error}</p>
+            {retryCount > 0 && <p className="error">已重试 {retryCount} 次</p>}
+            <button onClick={retryAiMove} style={{ marginTop: '8px' }}>
+              重试 AI 落子
+            </button>
+          </div>
+        ) : null}
 
         <div className="boardWrap">
           <canvas
